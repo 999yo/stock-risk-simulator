@@ -213,11 +213,13 @@ export function StockSimulator() {
         });
         return;
       }
+      const delayedPrice = payload.price;
+      const delayedDate = payload.priceDate;
 
       setValues((current) => ({
         ...current,
-        price: String(Math.round(payload.price)),
-        date: payload.priceDate!,
+        price: String(Math.round(delayedPrice)),
+        date: delayedDate,
         source: "J-Quants（約12週間遅延・個人利用向け）",
       }));
       if (result) setDirty(true);
@@ -229,8 +231,8 @@ export function StockSimulator() {
       }));
       setJquants({
         status: "success",
-        price: payload.price,
-        date: payload.priceDate,
+        price: delayedPrice,
+        date: delayedDate,
         adjusted: Boolean(payload.adjusted),
       });
     } catch {

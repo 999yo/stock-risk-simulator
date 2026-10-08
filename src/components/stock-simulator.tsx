@@ -56,6 +56,11 @@ type SecurityState =
   | { status: "loading" }
   | { status: "success"; candidates: string[]; marketName: string; fetchedAt: string }
   | { status: "error"; message: string; canRetry: boolean };
+type JQuantsState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "success"; price: number; date: string; adjusted: boolean }
+  | { status: "error"; message: string };
 
 const marketNames: Record<Market, string> = {
   TSE: "東京",
@@ -146,6 +151,7 @@ export function StockSimulator() {
   const [values, setValues] = useState(initialValues);
   const [errors, setErrors] = useState<Errors>({});
   const [security, setSecurity] = useState<SecurityState>({ status: "idle" });
+  const [jquants, setJquants] = useState<JQuantsState>({ status: "idle" });
   const [result, setResult] = useState<ReturnType<typeof calculateSimulation> | null>(null);
   const [resultMeta, setResultMeta] = useState<FormValues | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -163,10 +169,76 @@ export function StockSimulator() {
     if (result) setDirty(true);
     if (affectsSecurity) {
       setSecurity({ status: "idle" });
+      setJquants({ status: "idle" });
       setResult(null);
       setResultMeta(null);
       setDirty(false);
       setValues((current) => ({ ...current, [field]: normalized, companyName: "" }));
+    }
+  };
+
+  const fetchDelayedPrice = async () => {
+    if (!validateSecurity()) return;
+    if (values.market !== "TSE") {
+      setJquants({
+        status: "error",
+        message: "J-Quantsの株価四本値は東証上場銘柄のみ対象です。株価を手入力してください。",
+      });
+      return;
+    }
+
+    setJquants({ status: "loading" });
+    try {
+      const response = await fetch("/api/jquants", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ticker: values.ticker, market: values.market }),
+      });
+      const payload = (await response.json()) as {
+        message?: string;
+        price?: number;
+        priceDate?: string;
+        adjusted?: boolean;
+      };
+      if (
+        !response.ok ||
+        typeof payload.price !== "number" ||
+        typeof payload.priceDate !== "string"
+      ) {
+        setJquants({
+          status: "error",
+          message:
+            payload.message ??
+            "遅延株価を取得できませんでした。株価を手入力して試算を続けてください。",
+        });
+        return;
+      }
+
+      setValues((current) => ({
+        ...current,
+        price: String(Math.round(payload.price)),
+        date: payload.priceDate!,
+        source: "J-Quants（約12週間遅延・個人利用向け）",
+      }));
+      if (result) setDirty(true);
+      setErrors((current) => ({
+        ...current,
+        price: undefined,
+        date: undefined,
+        source: undefined,
+      }));
+      setJquants({
+        status: "success",
+        price: payload.price,
+        date: payload.priceDate,
+        adjusted: Boolean(payload.adjusted),
+      });
+    } catch {
+      setJquants({
+        status: "error",
+        message:
+          "J-Quantsから遅延株価を取得できませんでした。株価を手入力して試算を続けてください。",
+      });
     }
   };
 
@@ -284,6 +356,7 @@ export function StockSimulator() {
     setValues(initialValues);
     setErrors({});
     setSecurity({ status: "idle" });
+    setJquants({ status: "idle" });
     setResult(null);
     setResultMeta(null);
     setDirty(false);
@@ -317,7 +390,9 @@ export function StockSimulator() {
       </header>
 
       <p ref={liveRef} className="sr-only" role="status" aria-live="polite">
-        {security.status === "loading"
+        {jquants.status === "loading"
+          ? "J-Quantsから約12週間遅延の株価を取得しています"
+          : security.status === "loading"
           ? "銘柄名を取得しています"
           : result
             ? "リスクシミュレーションが完了しました"
@@ -462,6 +537,52 @@ export function StockSimulator() {
               </div>
             </CardHeader>
             <CardContent className="grid gap-5 sm:grid-cols-2">
+              <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 sm:col-span-2">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-semibold text-slate-900">J-Quants遅延終値（任意）</p>
+                      <Badge className="bg-sky-100 text-sky-800 hover:bg-sky-100">約12週間遅延</Badge>
+                      <Badge variant="outline">個人利用向け</Badge>
+                    </div>
+                    <p className="mt-2 text-xs leading-relaxed text-slate-600">
+                      ローカル・非公開利用で設定した場合だけ取得できます。取得値で基準株価・基準日・確認元を上書きします。
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-11 shrink-0 border-sky-300 bg-white"
+                    disabled={jquants.status === "loading"}
+                    onClick={fetchDelayedPrice}
+                  >
+                    {jquants.status === "loading" ? (
+                      <>
+                        <LoaderCircle className="animate-spin" aria-hidden /> 遅延株価を取得中…
+                      </>
+                    ) : (
+                      "遅延終値を入力欄へ反映"
+                    )}
+                  </Button>
+                </div>
+                {jquants.status === "success" && (
+                  <Alert className="mt-4 border-teal-200 bg-white">
+                    <CheckCircle2 className="text-teal-700" aria-hidden />
+                    <AlertTitle>約12週間遅延の終値を入力欄へ反映しました</AlertTitle>
+                    <AlertDescription>
+                      {jquants.date}・{yen(jquants.price)}
+                      {jquants.adjusted ? "（調整済み終値を1円単位へ四捨五入）" : ""}
+                    </AlertDescription>
+                  </Alert>
+                )}
+                {jquants.status === "error" && (
+                  <Alert variant="destructive" className="mt-4 bg-white">
+                    <AlertCircle aria-hidden />
+                    <AlertTitle>遅延株価を取得できませんでした</AlertTitle>
+                    <AlertDescription>{jquants.message}</AlertDescription>
+                  </Alert>
+                )}
+              </div>
               <Field
                 id="price"
                 label="基準株価"
@@ -469,6 +590,7 @@ export function StockSimulator() {
                 onChange={(value) => setValue("price", value)}
                 error={errors.price}
                 suffix="円"
+                help="手入力、または任意のJ-Quants遅延終値で上書きできます"
               />
               <Field
                 id="date"

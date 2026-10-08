@@ -64,6 +64,8 @@ const marketNames: Record<Market, string> = {
   SSE: "札幌",
 };
 
+const TODAY_START = new Date(new Date().toISOString().slice(0, 10)).getTime();
+
 const initialValues: FormValues = {
   ticker: "",
   market: "",
@@ -275,7 +277,7 @@ export function StockSimulator() {
 
   const isStaleDate = useMemo(() => {
     if (!values.date) return false;
-    return Date.now() - new Date(`${values.date}T00:00:00`).getTime() >= 4 * 86_400_000;
+    return TODAY_START - new Date(`${values.date}T00:00:00`).getTime() >= 4 * 86_400_000;
   }, [values.date]);
 
   const clear = () => {

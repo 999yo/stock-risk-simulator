@@ -19,7 +19,7 @@ const notoSansJp = Noto_Sans_JP({
 
 export const metadata: Metadata = {
   title: "日本株 損益・リスクシミュレーター",
-  description: "入力した株価で評価損益と下落時のリスクを無料で試算します。",
+  description: "手入力した株価、または約12週間遅延の終値で、損益と下落時の損失を試算します。",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

@@ -1,33 +1,33 @@
 import { NextResponse } from "next/server";
 import {
   getDelayedWindow,
-  isLocalHostname,
+  isJQuantsConfigured,
   selectLatestDelayedClose,
   type JQuantsDailyBar,
 } from "@/lib/jquants";
 
-const unavailableMessage =
+const unconfiguredMessage =
   "J-Quants連携は未設定です。株価を手入力して試算を続けてください。";
 
-function isPrivateIntegrationAvailable(request: Request) {
-  return (
-    process.env.JQUANTS_PRIVATE_MODE === "true" &&
-    Boolean(process.env.JQUANTS_API_KEY) &&
-    isLocalHostname(new URL(request.url).hostname)
+function apiKey() {
+  const key = process.env.JQUANTS_API_KEY?.trim();
+  return isJQuantsConfigured(key) ? key : undefined;
+}
+
+export async function GET() {
+  return NextResponse.json(
+    {
+      available: isJQuantsConfigured(process.env.JQUANTS_API_KEY),
+      delay: "約12週間",
+    },
+    { headers: { "Cache-Control": "no-store" } },
   );
 }
 
-export async function GET(request: Request) {
-  return NextResponse.json({
-    available: isPrivateIntegrationAvailable(request),
-    mode: "private-local-only",
-    delay: "約12週間",
-  });
-}
-
 export async function POST(request: Request) {
-  if (!isPrivateIntegrationAvailable(request)) {
-    return NextResponse.json({ message: unavailableMessage }, { status: 503 });
+  const key = apiKey();
+  if (!key) {
+    return NextResponse.json({ message: unconfiguredMessage }, { status: 503 });
   }
 
   let body: unknown;
@@ -65,7 +65,7 @@ export async function POST(request: Request) {
 
   try {
     const response = await fetch(url, {
-      headers: { "x-api-key": process.env.JQUANTS_API_KEY! },
+      headers: { "x-api-key": key },
       signal: controller.signal,
       cache: "no-store",
     });
@@ -109,13 +109,12 @@ export async function POST(request: Request) {
       priceDate: latest.date,
       adjusted: latest.adjusted,
       delay: "約12週間",
-      source: "J-Quants API（個人・私的利用）",
     });
   } catch {
     return NextResponse.json(
       {
         message:
-          "J-Quantsから遅延株価を取得できませんでした。株価を手入力して試算を続けてください。",
+          "J-Quantsから約12週間遅延の終値を取得できませんでした。株価を手入力して試算を続けてください。",
       },
       { status: 503 },
     );

@@ -12,9 +12,11 @@ describe("calculateSimulation", () => {
 
     expect(result.acquisitionTotal).toBe(390_000);
     expect(result.profitLoss).toBe(0);
+    expect(result.scenarios.map((scenario) => scenario.rate)).toEqual([
+      0.05, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8,
+    ]);
     expect(result.scenarios[0]).toMatchObject({
       price: 2470,
-      additionalLoss: 19_500,
       profitLoss: -19_500,
       exceeded: false,
     });
@@ -24,6 +26,13 @@ describe("calculateSimulation", () => {
       exceeded: true,
       difference: -8_500,
     });
+    const deepest = result.scenarios[9];
+    expect(deepest.price).toBeCloseTo(520);
+    expect(deepest.value).toBeCloseTo(78_000);
+    expect(deepest.profitLoss).toBeCloseTo(-312_000);
+    expect(deepest.profitLossRate).toBeCloseTo(-80);
+    expect(deepest.exceeded).toBe(true);
+    expect(deepest.difference).toBeCloseTo(-262_000);
     expect(result.thresholdPrice).toBeCloseTo(2266.6666667);
   });
 

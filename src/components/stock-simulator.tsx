@@ -776,11 +776,18 @@ export function StockSimulator() {
               <CardDescription>この株価から下落した場合の、取得時点からの想定損益です</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="h-72 w-full" role="img" aria-label="下落後株価と想定損益の折れ線グラフ">
+              <div className="h-80 w-full" role="img" aria-label="下落後株価と想定損益の折れ線グラフ">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={graphData} margin={{ top: 10, right: 12, left: 8, bottom: 8 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                    <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+                    <XAxis
+                      dataKey="label"
+                      interval={0}
+                      tick={{ fontSize: 11 }}
+                      angle={-40}
+                      textAnchor="end"
+                      height={56}
+                    />
                     <YAxis
                       width={70}
                       tick={{ fontSize: 11 }}
@@ -862,7 +869,7 @@ export function StockSimulator() {
                 <table className="w-full text-sm">
                   <thead className="bg-slate-100 text-left text-xs text-slate-600">
                     <tr>
-                      {["下落率", "下落後株価", "下落後評価額", "追加損失", "想定損益", "損益率", "判定"].map(
+                      {["下落率", "下落後株価", "下落後評価額", "想定損益", "損益率", "判定"].map(
                         (heading) => (
                           <th key={heading} scope="col" className="px-3 py-3 font-semibold">
                             {heading}
@@ -879,7 +886,6 @@ export function StockSimulator() {
                         </th>
                         <td className="px-3 py-4 font-mono">{yen(scenario.price)}</td>
                         <td className="px-3 py-4 font-mono">{yen(scenario.value)}</td>
-                        <td className="px-3 py-4 font-mono">{yen(scenario.additionalLoss)}</td>
                         <td className="px-3 py-4 font-mono">{signedYen(scenario.profitLoss)}</td>
                         <td className="px-3 py-4 font-mono">{percent(scenario.profitLossRate)}</td>
                         <td className="px-3 py-4">
@@ -900,7 +906,6 @@ export function StockSimulator() {
                     <dl className="grid gap-3 text-sm">
                       <Row label="下落後株価" value={yen(scenario.price)} />
                       <Row label="下落後評価額" value={yen(scenario.value)} />
-                      <Row label="この株価からの追加損失" value={yen(scenario.additionalLoss)} />
                       <Row label="取得時からの想定損益" value={signedYen(scenario.profitLoss)} />
                       <Row label="取得時からの想定損益率" value={percent(scenario.profitLossRate)} />
                     </dl>

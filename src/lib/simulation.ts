@@ -1,4 +1,4 @@
-export const DECLINE_RATES = [0.05, 0.1, 0.15, 0.2, 0.3] as const;
+export const DECLINE_RATES = [0.05, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8] as const;
 
 export type SimulationInput = {
   price: number;
@@ -11,7 +11,6 @@ export type Scenario = {
   rate: number;
   price: number;
   value: number;
-  additionalLoss: number;
   profitLoss: number;
   profitLossRate: number;
   lossAmount: number;
@@ -60,7 +59,6 @@ export function calculateSimulation(input: SimulationInput): SimulationResult {
         rate,
         price: scenarioPrice,
         value: scenarioPrice * quantity,
-        additionalLoss: (price - scenarioPrice) * quantity,
         profitLoss: scenarioProfitLoss,
         profitLossRate: ((scenarioPrice - averageCost) / averageCost) * 100,
         lossAmount,

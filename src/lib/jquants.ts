@@ -27,15 +27,17 @@ export function selectLatestDelayedClose(bars: JQuantsDailyBar[]) {
 
   if (!latest) return null;
   const close = typeof latest.AdjC === "number" ? latest.AdjC : latest.C;
-  if (typeof close !== "number" || !Number.isFinite(close) || close <= 0) return null;
+  if (typeof close !== "number" || !Number.isFinite(close)) return null;
+  const rounded = Math.round(close);
+  if (rounded <= 0) return null;
 
   return {
     date: latest.Date,
-    close,
+    close: rounded,
     adjusted: typeof latest.AdjC === "number",
   };
 }
 
-export function isLocalHostname(hostname: string) {
-  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+export function isJQuantsConfigured(apiKey: string | undefined) {
+  return typeof apiKey === "string" && apiKey.trim().length > 0;
 }

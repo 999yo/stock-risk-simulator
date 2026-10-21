@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
@@ -39,16 +39,22 @@ import { Label } from "@/components/ui/label";
 import { calculateSimulation, normalizeNumericInput, normalizeTicker } from "@/lib/simulation";
 
 type Market = "TSE" | "NSE" | "FSE" | "SSE";
+type PriceKind = "manual" | "delayed";
 type FormValues = {
   ticker: string;
   market: Market | "";
   companyName: string;
   price: string;
   date: string;
-  source: string;
   quantity: string;
   averageCost: string;
   lossLimit: string;
+};
+type ResultMeta = {
+  price: string;
+  date: string;
+  lossLimit: string;
+  priceKind: PriceKind;
 };
 type Errors = Partial<Record<keyof FormValues, string>>;
 type SecurityState =
@@ -77,7 +83,6 @@ const initialValues: FormValues = {
   companyName: "",
   price: "",
   date: "",
-  source: "",
   quantity: "",
   averageCost: "",
   lossLimit: "",
@@ -88,6 +93,10 @@ const signedYen = (value: number) =>
   `${value > 0 ? "+" : value < 0 ? "−" : ""}${Math.abs(Math.round(value)).toLocaleString("ja-JP")}円`;
 const percent = (value: number) =>
   `${value > 0 ? "+" : value < 0 ? "−" : ""}${Math.abs(value).toFixed(2)}%`;
+const formatDate = (iso: string) => {
+  const [year, month, day] = iso.split("-");
+  return year && month && day ? `${year}/${month}/${day}` : iso;
+};
 
 function Field({
   id,
@@ -152,10 +161,26 @@ export function StockSimulator() {
   const [errors, setErrors] = useState<Errors>({});
   const [security, setSecurity] = useState<SecurityState>({ status: "idle" });
   const [jquants, setJquants] = useState<JQuantsState>({ status: "idle" });
+  const [priceKind, setPriceKind] = useState<PriceKind>("manual");
+  const [integration, setIntegration] = useState<"unknown" | "ready" | "unconfigured">("unknown");
   const [result, setResult] = useState<ReturnType<typeof calculateSimulation> | null>(null);
-  const [resultMeta, setResultMeta] = useState<FormValues | null>(null);
+  const [resultMeta, setResultMeta] = useState<ResultMeta | null>(null);
   const [dirty, setDirty] = useState(false);
   const liveRef = useRef<HTMLParagraphElement>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/jquants", { signal: controller.signal })
+      .then(async (response) => {
+        const payload = (await response.json()) as { available?: boolean };
+        setIntegration(payload.available ? "ready" : "unconfigured");
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setIntegration("unknown");
+      });
+    return () => controller.abort();
+  }, []);
 
   const setValue = (field: keyof FormValues, value: string, affectsSecurity = false) => {
     const normalized =
@@ -166,8 +191,10 @@ export function StockSimulator() {
           : value;
     setValues((current) => ({ ...current, [field]: normalized }));
     setErrors((current) => ({ ...current, [field]: undefined }));
+    if (field === "price") setPriceKind("manual");
     if (result) setDirty(true);
     if (affectsSecurity) {
+      setPriceKind("manual");
       setSecurity({ status: "idle" });
       setJquants({ status: "idle" });
       setResult(null);
@@ -209,25 +236,24 @@ export function StockSimulator() {
           status: "error",
           message:
             payload.message ??
-            "遅延株価を取得できませんでした。株価を手入力して試算を続けてください。",
+            "約12週間遅延の終値を取得できませんでした。株価を手入力して試算を続けてください。",
         });
         return;
       }
-      const delayedPrice = payload.price;
+      const delayedPrice = Math.round(payload.price);
       const delayedDate = payload.priceDate;
 
+      setPriceKind("delayed");
       setValues((current) => ({
         ...current,
-        price: String(Math.round(delayedPrice)),
+        price: String(delayedPrice),
         date: delayedDate,
-        source: "J-Quants（約12週間遅延・個人利用向け）",
       }));
       if (result) setDirty(true);
       setErrors((current) => ({
         ...current,
         price: undefined,
         date: undefined,
-        source: undefined,
       }));
       setJquants({
         status: "success",
@@ -239,7 +265,7 @@ export function StockSimulator() {
       setJquants({
         status: "error",
         message:
-          "J-Quantsから遅延株価を取得できませんでした。株価を手入力して試算を続けてください。",
+          "J-Quantsから約12週間遅延の終値を取得できませんでした。株価を手入力して試算を続けてください。",
       });
     }
   };
@@ -307,7 +333,7 @@ export function StockSimulator() {
       next.ticker = "銘柄コードを半角英数字4文字で入力してください";
     if (!values.market) next.market = "市場を選択してください";
     if (values.companyName.length > 100) next.companyName = "会社名は100文字以内で入力してください";
-    checkInteger("price", 1, 10_000_000, "基準株価を1円から10,000,000円までの整数で入力してください");
+    checkInteger("price", 1, 10_000_000, "株価を1円から10,000,000円までの整数で入力してください");
     checkInteger("quantity", 1, 1_000_000, "保有株数を1株から1,000,000株までの整数で入力してください");
     checkInteger(
       "averageCost",
@@ -322,8 +348,7 @@ export function StockSimulator() {
       "最大損失許容額を0円から10,000,000,000,000円までの整数で入力してください",
     );
     if (!values.date || values.date > new Date().toISOString().slice(0, 10))
-      next.date = "価格を確認した日付を入力してください";
-    if (values.source.length > 100) next.source = "確認元は100文字以内で入力してください";
+      next.date = "価格基準日を入力してください";
     setErrors(next);
     return next;
   };
@@ -344,21 +369,27 @@ export function StockSimulator() {
         lossLimit: Number(values.lossLimit),
       }),
     );
-    setResultMeta({ ...values });
+    setResultMeta({
+      price: values.price,
+      date: values.date,
+      lossLimit: values.lossLimit,
+      priceKind,
+    });
     setDirty(false);
     requestAnimationFrame(() => document.getElementById("results")?.focus());
   };
 
   const isStaleDate = useMemo(() => {
-    if (!values.date) return false;
+    if (priceKind !== "manual" || !values.date) return false;
     return TODAY_START - new Date(`${values.date}T00:00:00`).getTime() >= 4 * 86_400_000;
-  }, [values.date]);
+  }, [priceKind, values.date]);
 
   const clear = () => {
     setValues(initialValues);
     setErrors({});
     setSecurity({ status: "idle" });
     setJquants({ status: "idle" });
+    setPriceKind("manual");
     setResult(null);
     setResultMeta(null);
     setDirty(false);
@@ -366,7 +397,7 @@ export function StockSimulator() {
 
   const graphData = result
     ? [
-        { label: "基準", price: Number(resultMeta?.price), profitLoss: result.profitLoss },
+        { label: "株価", price: Number(resultMeta?.price), profitLoss: result.profitLoss },
         ...result.scenarios.map((item) => ({
           label: `-${item.rate * 100}%`,
           price: item.price,
@@ -387,18 +418,26 @@ export function StockSimulator() {
         </h1>
         <p className="mt-3 text-lg font-medium text-slate-700">買う前に、負け方を可視化する。</p>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-          利用者が入力した株価で、現在の評価損益と下落時のリスクを試算します。株価の自動取得・保存は行いません。
+          手入力した株価、または約12週間遅延の終値で、損益と下落時の損失を試算します。
         </p>
       </header>
 
       <p ref={liveRef} className="sr-only" role="status" aria-live="polite">
         {jquants.status === "loading"
-          ? "J-Quantsから約12週間遅延の株価を取得しています"
+          ? "約12週間遅延の終値を反映しています"
           : security.status === "loading"
-          ? "銘柄名を取得しています"
-          : result
-            ? "リスクシミュレーションが完了しました"
-            : ""}
+            ? "銘柄名を取得しています"
+            : dirty && result
+              ? "入力内容が変更されています。再度試算してください。"
+              : result
+                ? "リスクシミュレーションが完了しました"
+                : jquants.status === "error"
+                  ? jquants.message
+                  : jquants.status === "success"
+                    ? "約12週間遅延の終値を反映しました"
+                    : integration === "unconfigured"
+                      ? "J-Quants連携は未設定です。株価を手入力して試算を続けてください。"
+                      : ""}
       </p>
 
       <form onSubmit={submit} noValidate>
@@ -533,8 +572,8 @@ export function StockSimulator() {
                   2
                 </span>
                 <div>
-                  <CardTitle>保有情報と入力価格</CardTitle>
-                  <CardDescription>価格は信頼できる情報元で確認してください</CardDescription>
+                  <CardTitle>保有情報</CardTitle>
+                  <CardDescription>保有株数と株価から損益を試算します</CardDescription>
                 </div>
               </div>
             </CardHeader>
@@ -543,12 +582,11 @@ export function StockSimulator() {
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <p className="font-semibold text-slate-900">J-Quants遅延終値（任意）</p>
-                      <Badge className="bg-sky-100 text-sky-800 hover:bg-sky-100">約12週間遅延</Badge>
-                      <Badge variant="outline">個人利用向け</Badge>
+                      <p className="font-semibold text-slate-900">約12週間遅延の終値</p>
+                      <Badge className="bg-sky-100 text-sky-800 hover:bg-sky-100">個人利用</Badge>
                     </div>
                     <p className="mt-2 text-xs leading-relaxed text-slate-600">
-                      ローカル・非公開利用で設定した場合だけ取得できます。取得値で基準株価・基準日・確認元を上書きします。
+                      個人利用のデプロイ先では、サーバーがJ-Quants無料版の約12週間遅延終値を取得し、株価と価格基準日へ反映します。現在値でも12時間遅延の価格でもありません。反映後も上書きできます。未設定または取得失敗時は、手入力のまま試算できます。
                     </p>
                   </div>
                   <Button
@@ -560,19 +598,19 @@ export function StockSimulator() {
                   >
                     {jquants.status === "loading" ? (
                       <>
-                        <LoaderCircle className="animate-spin" aria-hidden /> 遅延株価を取得中…
+                        <LoaderCircle className="animate-spin" aria-hidden /> 反映中…
                       </>
                     ) : (
-                      "遅延終値を入力欄へ反映"
+                      "約12週間遅延の終値を反映"
                     )}
                   </Button>
                 </div>
                 {jquants.status === "success" && (
                   <Alert className="mt-4 border-teal-200 bg-white">
                     <CheckCircle2 className="text-teal-700" aria-hidden />
-                    <AlertTitle>約12週間遅延の終値を入力欄へ反映しました</AlertTitle>
+                    <AlertTitle>約12週間遅延の終値を反映しました</AlertTitle>
                     <AlertDescription>
-                      {jquants.date}・{yen(jquants.price)}
+                      価格基準日 {formatDate(jquants.date)}・{yen(jquants.price)}
                       {jquants.adjusted ? "（調整済み終値を1円単位へ四捨五入）" : ""}
                     </AlertDescription>
                   </Alert>
@@ -580,19 +618,26 @@ export function StockSimulator() {
                 {jquants.status === "error" && (
                   <Alert variant="destructive" className="mt-4 bg-white">
                     <AlertCircle aria-hidden />
-                    <AlertTitle>遅延株価を取得できませんでした</AlertTitle>
+                    <AlertTitle>終値を反映できませんでした</AlertTitle>
                     <AlertDescription>{jquants.message}</AlertDescription>
+                  </Alert>
+                )}
+                {integration === "unconfigured" && jquants.status === "idle" && (
+                  <Alert className="mt-4 border-slate-200 bg-white">
+                    <AlertCircle aria-hidden />
+                    <AlertTitle>J-Quants連携は未設定です</AlertTitle>
+                    <AlertDescription>株価を手入力して試算を続けてください。</AlertDescription>
                   </Alert>
                 )}
               </div>
               <Field
                 id="price"
-                label="基準株価"
+                label="株価"
                 value={values.price}
                 onChange={(value) => setValue("price", value)}
                 error={errors.price}
                 suffix="円"
-                help="手入力、または任意のJ-Quants遅延終値で上書きできます"
+                help="手入力するか、約12週間前の終値を反映できます"
               />
               <Field
                 id="date"
@@ -601,17 +646,8 @@ export function StockSimulator() {
                 value={values.date}
                 onChange={(value) => setValue("date", value)}
                 error={errors.date}
+                help="手入力した価格の日付、または取得した終値の日付"
               />
-              <div className="sm:col-span-2">
-                <Field
-                  id="source"
-                  label="価格の確認元（任意）"
-                  value={values.source}
-                  onChange={(value) => setValue("source", value)}
-                  error={errors.source}
-                  maxLength={101}
-                />
-              </div>
               <Field
                 id="quantity"
                 label="保有株数"
@@ -645,7 +681,7 @@ export function StockSimulator() {
                   <AlertCircle className="text-amber-700" aria-hidden />
                   <AlertTitle>入力した価格の基準日をご確認ください</AlertTitle>
                   <AlertDescription>
-                    4暦日以上前の価格です。休場日を考慮した鮮度保証ではありません。
+                    このアプリは価格の新しさを保証しません。4暦日以上前の日付です。休場日を考慮した鮮度保証ではありません。
                   </AlertDescription>
                 </Alert>
               )}
@@ -677,13 +713,19 @@ export function StockSimulator() {
           <Card className="border-slate-200 bg-slate-950 text-white shadow-sm">
             <CardHeader>
               <div className="flex items-center justify-between gap-3">
-                <CardTitle>入力価格基準の損益</CardTitle>
-                <Badge className="bg-teal-400 text-slate-950">利用者入力</Badge>
+                <CardTitle>この株価での損益</CardTitle>
+                {result && resultMeta && (
+                  <Badge className="bg-teal-400 text-slate-950">
+                    {resultMeta.priceKind === "delayed" ? "約12週間遅延の終値" : "利用者入力"}
+                  </Badge>
+                )}
               </div>
               <CardDescription className="text-slate-400">
-                {resultMeta
-                  ? `${resultMeta.date}${resultMeta.source ? `・${resultMeta.source}` : ""}`
-                  : "試算するとここに現在の評価損益を表示します"}
+                {result && resultMeta
+                  ? resultMeta.priceKind === "delayed"
+                    ? `約12週間遅延の終値。価格基準日: ${formatDate(resultMeta.date)}`
+                    : `この価格は利用者が入力した値です。価格基準日: ${formatDate(resultMeta.date)}`
+                  : "試算すると、この株価での損益を表示します"}
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -724,21 +766,28 @@ export function StockSimulator() {
             <Alert className="border-amber-300 bg-amber-50">
               <AlertCircle className="text-amber-700" aria-hidden />
               <AlertTitle>入力内容が変更されています</AlertTitle>
-              <AlertDescription>再度シミュレーションして結果を更新してください。</AlertDescription>
+              <AlertDescription>再度試算してください。</AlertDescription>
             </Alert>
           )}
 
           <Card className="border-slate-200 shadow-sm">
             <CardHeader>
               <CardTitle>損益シミュレーション</CardTitle>
-              <CardDescription>入力した基準株価から下落した場合の、取得時点からの想定損益です</CardDescription>
+              <CardDescription>この株価から下落した場合の、取得時点からの想定損益です</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="h-72 w-full" role="img" aria-label="下落後株価と想定損益の折れ線グラフ">
+              <div className="h-80 w-full" role="img" aria-label="下落後株価と想定損益の折れ線グラフ">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={graphData} margin={{ top: 10, right: 12, left: 8, bottom: 8 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                    <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+                    <XAxis
+                      dataKey="label"
+                      interval={0}
+                      tick={{ fontSize: 11 }}
+                      angle={-40}
+                      textAnchor="end"
+                      height={56}
+                    />
                     <YAxis
                       width={70}
                       tick={{ fontSize: 11 }}
@@ -788,7 +837,7 @@ export function StockSimulator() {
                   ) : (
                     <CheckCircle2 className="text-teal-700" aria-hidden />
                   )}
-                  {result.currentExceeded ? "基準株価ですでに超過" : "基準株価は許容額以内"}
+                  {result.currentExceeded ? "入力した株価ですでに超過" : "この株価は許容額以内"}
                 </div>
                 <p className="mt-2 text-sm text-slate-700">
                   {result.currentExceeded
@@ -803,8 +852,8 @@ export function StockSimulator() {
                   {result.neverExceededAtZero
                     ? "株価が0円になっても許容額を超えません"
                     : result.currentExceeded
-                      ? "入力した基準株価ですでに最大損失許容額を超えています"
-                      : `基準株価から ${Math.max(0, result.thresholdDeclineRate).toFixed(2)}% 下落で到達`}
+                      ? "入力した株価ですでに最大損失許容額を超えています"
+                      : `この株価から ${Math.max(0, result.thresholdDeclineRate).toFixed(2)}% 下落で到達`}
                 </p>
               </div>
             </CardContent>
@@ -820,7 +869,7 @@ export function StockSimulator() {
                 <table className="w-full text-sm">
                   <thead className="bg-slate-100 text-left text-xs text-slate-600">
                     <tr>
-                      {["下落率", "下落後株価", "下落後評価額", "追加損失", "想定損益", "損益率", "判定"].map(
+                      {["下落率", "下落後株価", "下落後評価額", "想定損益", "損益率", "判定"].map(
                         (heading) => (
                           <th key={heading} scope="col" className="px-3 py-3 font-semibold">
                             {heading}
@@ -837,7 +886,6 @@ export function StockSimulator() {
                         </th>
                         <td className="px-3 py-4 font-mono">{yen(scenario.price)}</td>
                         <td className="px-3 py-4 font-mono">{yen(scenario.value)}</td>
-                        <td className="px-3 py-4 font-mono">{yen(scenario.additionalLoss)}</td>
                         <td className="px-3 py-4 font-mono">{signedYen(scenario.profitLoss)}</td>
                         <td className="px-3 py-4 font-mono">{percent(scenario.profitLossRate)}</td>
                         <td className="px-3 py-4">
@@ -858,7 +906,6 @@ export function StockSimulator() {
                     <dl className="grid gap-3 text-sm">
                       <Row label="下落後株価" value={yen(scenario.price)} />
                       <Row label="下落後評価額" value={yen(scenario.value)} />
-                      <Row label="基準株価からの追加損失" value={yen(scenario.additionalLoss)} />
                       <Row label="取得時からの想定損益" value={signedYen(scenario.profitLoss)} />
                       <Row label="取得時からの想定損益率" value={percent(scenario.profitLossRate)} />
                     </dl>
@@ -873,7 +920,7 @@ export function StockSimulator() {
       <section className="mt-10 rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm leading-6 text-slate-600 sm:p-7">
         <h2 className="mb-3 font-semibold text-slate-900">注意事項・免責事項</h2>
         <p>
-          本サービスは株価を自動取得せず、利用者が入力した価格に基づいて試算します。入力価格の正確性・最新性を保証しません。計算結果は参考情報であり、投資成果を保証するものでも、特定の金融商品の売買を推奨するものでもありません。実際の損益には手数料、税金、価格変動、約定価格等が影響します。
+          株価は、利用者が手入力した価格、または個人利用のデプロイ先でサーバーが取得したJ-Quants無料版の約12週間遅延の終値です。約12週間遅延の終値は、現在値でも12時間遅延の価格でもありません。価格の正確性・最新性を保証しません。計算結果は参考情報であり、投資成果を保証するものでも、特定の金融商品の売買を推奨するものでもありません。実際の損益には手数料、税金、価格変動、約定価格等が影響します。
         </p>
         <p className="mt-3">
           株式分割・併合等がある場合は、利用者自身で調整済みの平均取得単価を確認して入力してください。本サービスは取得単価を自動調整しません。入力内容は保存されません。
